@@ -1,0 +1,15 @@
+{
+    "idf.pythonInstallPath": "/usr/bin/python3",
+    "files.associations": {
+        "task.h": "c",
+        "chip_utils.h": "c",
+        "esp_lcd_panel_ssd1306.h": "c",
+        "i2c_master.h": "c",
+        "esp_lcd_panel_io.h": "c",
+        "esp_lcd_panel_ops.h": "c",
+        "i2c_lcd.h": "c",
+        "portmacro.h": "c",
+        "esp_chip_info.h": "c",
+        "param.h": "c"
+    }
+}
