@@ -133,6 +133,7 @@ void initSSD1306Panel(i2c_master_bus_handle_t i2c_bus, esp_lcd_panel_io_handle_t
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(*panel_handle, true));
 
     return;
+    
 
 };
 
