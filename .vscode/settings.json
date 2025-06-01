@@ -11,6 +11,7 @@
         "portmacro.h": "c",
         "esp_chip_info.h": "c",
         "param.h": "c",
-        "random": "c"
+        "random": "c",
+        "cstdint": "c"
     }
 }
