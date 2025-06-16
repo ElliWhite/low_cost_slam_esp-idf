@@ -12,6 +12,9 @@
         "esp_chip_info.h": "c",
         "param.h": "c",
         "random": "c",
-        "cstdint": "c"
+        "cstdint": "c",
+        "freertos.h": "c",
+        "sdkconfig.h": "c",
+        "esp_lcd_io_i2c.h": "c"
     }
 }

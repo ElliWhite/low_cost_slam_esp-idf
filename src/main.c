@@ -22,6 +22,9 @@
 #include "i2c_lcd.h"
 #include "math.h"
 
+#include "lsm303_driver_ng.h"
+#include "l3gd20_driver_ng.h"
+
 #define PIN_LED_BUILTIN 2
 
 
@@ -32,6 +35,39 @@
 #define SYNC_BYTE_1         0xA0    // First angle (0 degrees). Angles are 0xA0->0xDB
 #define LIDAR_DIST_MAX      500     // max range of LiDAR in mm (set to 500mm for scaling on the small OLED - real max distance is 3500mm)
 
+
+static const char *TAG = "IMU";
+
+
+void i2c_scan(i2c_master_bus_handle_t bus) {
+    ESP_LOGI(TAG, "Starting I2C bus scan...");
+
+    int devices_found = 0;
+    uint8_t dummy = 0x00;
+    for (uint8_t addr = 0x03; addr < 0x78; addr++) {
+        i2c_master_dev_handle_t dev_handle;
+        i2c_device_config_t dev_cfg = {
+            .device_address = addr,
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .scl_speed_hz = 100000,
+        };
+
+        esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &dev_handle);
+        if (err == ESP_OK) {
+            // Perform zero-length write (just start + address + stop)
+            err = i2c_master_transmit(dev_handle, &dummy, 1, pdMS_TO_TICKS(100));
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "Found device at address 0x%02X", addr);
+                devices_found++;
+            }
+            i2c_master_bus_rm_device(dev_handle);
+        }
+    }
+
+    if (devices_found == 0) {
+        ESP_LOGW(TAG, "No I2C devices found!");
+    }
+}
 
 
 
@@ -50,7 +86,8 @@ void app_main(void)
     initI2C(&i2c_bus);
     initSSD1306Panel(i2c_bus, &io_handle, &panel_handle);
     
-    
+    //i2c_scan(i2c_bus);
+
     size_t draw_buffer_sz = SCREEN_WIDTH * SCREEN_HEIGHT / 8 + LVGL_PALETTE_SIZE;
     buf = heap_caps_calloc(1, draw_buffer_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     assert(buf);
@@ -140,7 +177,94 @@ void app_main(void)
     int num_found_packets = 0;
 
 
-    // this method of a rolling buffer of 3 packets means we are processing 2 scans behind the latest scan (not good!)
+    static lsm303_dev_t lsm303;
+    
+    ESP_LOGI(TAG, "Initialising LSM303");
+    ESP_ERROR_CHECK(lsm303_init_desc_ng(&lsm303, i2c_bus, LSM303_ADDR_ACC, LSM303_ADDR_MAG));
+    // CTRL_REG1_A - Power on, 50 Hz data rate, enable all axes
+    ESP_ERROR_CHECK(lsm303_write_register(lsm303.i2c_dev_accel, 0x20, 0x27));
+
+    // CRA_REG_M - Temperature sensor disable, 15 Hz data rate
+    ESP_ERROR_CHECK(lsm303_write_register(lsm303.i2c_dev_mag, 0x00, 0x14));
+
+    // CRB_REG_M - Gain setting, Sensor input field range +/- 1.3 Gauss
+    ESP_ERROR_CHECK(lsm303_write_register(lsm303.i2c_dev_mag, 0x01, 0x20));
+
+    // Gain setting: ±4 Gauss
+    ESP_ERROR_CHECK(lsm303_write_register(lsm303.i2c_dev_mag, 0x01, 0x40));
+
+    // MR_REG_M - Continuous-conversion mode
+    ESP_ERROR_CHECK(lsm303_write_register(lsm303.i2c_dev_mag, 0x02, 0x00));
+
+
+    static l3gd20_dev_t l3gd20;
+
+    ESP_LOGI(TAG, "Initialising L3GD20");
+    ESP_ERROR_CHECK(l3gd20_init_desc_ng(&l3gd20, i2c_bus, L3GD20_ADDR));
+
+    uint8_t who_am_i;
+    ESP_ERROR_CHECK(l3gd20_read_register(l3gd20.i2c_dev_gyro, L3GD20_REG_WHO_AM_I, &who_am_i, 1));
+    ESP_LOGI(TAG, "L3GD20 WHO_AM_I: 0x%02X", who_am_i);
+
+    // CTRL_REG4 - Set scale 500 dps
+    ESP_ERROR_CHECK(l3gd20_write_register(l3gd20.i2c_dev_gyro, L3GD20_REG_CTRL_REG4, (L3GD20_SCALE_500 << 4)));
+
+    // CTRL_REG1 - Set datarate and bandwidth L3GD20_DRBW_800_30 & enable all axes & enable normal power mode
+    ESP_ERROR_CHECK(l3gd20_write_register(l3gd20.i2c_dev_gyro, L3GD20_REG_CTRL_REG1, (L3GD20_DRBW_800_30 << 4) | L3GD20_ENABLE_ALL_AXES | (L3GD20_ENABLE_NORMAL_POWER_MODE << 3)));
+
+
+    while (1) {
+        int16_t ax, ay, az, mx, my, mz;
+        lsm303_acc_raw_data_t acc_raw_data;
+        lsm303_mag_raw_data_t mag_raw_data;
+        lsm303_acc_data_t acc_data;
+        lsm303_mag_data_t mag_data;
+
+        l3gd20_raw_data_t gyro_raw_data;
+        l3gd20_data_t gyro_data;
+
+        if (lsm303_get_accel(&lsm303, &ax, &ay, &az) == ESP_OK) {
+            ESP_LOGI(TAG, "Accel: X=%d Y=%d Z=%d", ax, ay, az);
+
+            acc_raw_data.x = ax;
+            acc_raw_data.y = ay;
+            acc_raw_data.z = az;
+            lsm303_acc_raw_to_g(&lsm303, &acc_raw_data, &acc_data);
+            ESP_LOGI(TAG, "Accel_in_g: X=%f Y=%f Z=%f", acc_data.x, acc_data.y, acc_data.z);
+        } else {
+            ESP_LOGE(TAG, "Failed to read accel");
+        }
+
+        if (lsm303_get_mag(&lsm303, &mx, &my, &mz) == ESP_OK) {
+            ESP_LOGI(TAG, "Mag: X=%d Y=%d Z=%d", mx, my, mz);
+
+            mag_raw_data.x = mx;
+            mag_raw_data.y = my;
+            mag_raw_data.z = mz;
+            lsm303_mag_raw_to_uT(&lsm303, &mag_raw_data, &mag_data);
+            ESP_LOGI(TAG, "Mag_in_uT: X=%f Y=%f Z=%f", mag_data.x, mag_data.y, mag_data.z);
+
+        } else {
+            ESP_LOGE(TAG, "Failed to read mag");
+        }
+
+        if (l3gd20_get_raw_data(&l3gd20, &gyro_raw_data) == ESP_OK) {
+
+            ESP_LOGI(TAG, "Gyro: X=%d Y=%d Z=%d", gyro_raw_data.x, gyro_raw_data.y, gyro_raw_data.z);
+
+            l3gd20_raw_to_dps(&l3gd20, &gyro_raw_data, &gyro_data);
+            ESP_LOGI(TAG, "Gyro_in_dps: X=%f Y=%f Z=%f", gyro_data.x, gyro_data.y, gyro_data.z);
+
+        } else {
+            ESP_LOGE(TAG, "Failed to read gyro");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+
+
+    
 
     while(1){
 

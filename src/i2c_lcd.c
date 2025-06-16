@@ -113,7 +113,7 @@ void initSSD1306Panel(i2c_master_bus_handle_t i2c_bus, esp_lcd_panel_io_handle_t
         .lcd_param_bits = LCD_CMD_BITS, // According to SSD1306 datasheet
         .dc_bit_offset = 6,                     // According to SSD1306 datasheet
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus, &io_config, io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c_v2(i2c_bus, &io_config, io_handle));       // forced to v2 (new implementation using driver_ng)
 
     COND_ESP_LOGI(TAG_I2C, "Install SSD1306 panel driver");
     //esp_lcd_panel_handle_t panel_handle = NULL;
